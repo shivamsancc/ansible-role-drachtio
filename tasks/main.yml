@@ -12,6 +12,25 @@
     update_cache: yes
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
 
+- name: Add Ubuntu toolchain PPA for Ubuntu 20.04
+  apt_repository:
+    repo: ppa:ubuntu-toolchain-r/ppa
+    state: present
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_version == '20.04'
+
+- name: Install newer autoconf for Ubuntu 20.04
+  shell: |
+    cd /tmp
+    wget https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz
+    tar xzf autoconf-2.71.tar.gz
+    cd autoconf-2.71
+    ./configure
+    make
+    make install
+  args:
+    creates: /usr/local/bin/autoconf
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_version == '20.04'
+
 - name: Install build tools for CentOS/RedHat
   yum: 
     name: ['gcc', 'gcc-c++', 'make', 'cmake', 'git', 'autoconf', 'curl', 'libtool', 'openssl-devel', 'libcurl-devel', 'zlib-devel', 'boost-devel', 'gperftools-devel']
@@ -38,8 +57,15 @@
     chdir: /usr/local/src/drachtio-server
   when: checkout.changed
 
+- name: Update autoconf path for Ubuntu 20.04
+  shell: |
+    export PATH="/usr/local/bin:$PATH"
+    hash -r
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_version == '20.04'
+
 - name: build drachtio-server
   shell: |
+    export PATH="/usr/local/bin:$PATH"
     ./autogen.sh && \
     mkdir -p build && \
     cd build && \
