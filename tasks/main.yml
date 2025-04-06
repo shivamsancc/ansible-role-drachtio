@@ -5,7 +5,7 @@
 
 - name: Install build tools for Debian/Ubuntu
   apt: 
-    name: ['build-essential', 'g++', 'gcc', 'make', 'cmake', 'libcurl4-openssl-dev', 'libboost-all-dev', 'libssl-dev', 'libtool', 'libtool-bin', 'autoconf', 'automake', 'zlib1g-dev', 'libgoogle-perftools-dev', 'git', 'curl', 'systemd-coredump', 'liblz4-tool']
+    name: ['build-essential', 'g++', 'gcc', 'make', 'cmake', 'libcurl4-openssl-dev', 'libboost-all-dev', 'libssl-dev', 'libtool', 'libtool-bin', 'autoconf', 'automake', 'zlib1g-dev', 'libgoogle-perftools-dev', 'git', 'curl', 'systemd-coredump', 'liblz4-tool', 'autoconf-archive']
     state: present
     update_cache: yes
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
@@ -38,12 +38,21 @@
   register: submodule_result
   failed_when: submodule_result.rc != 0
 
-- name: Run autogen.sh
-  command: ./autogen.sh
+- name: Clean any previous build artifacts
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - "/usr/local/src/drachtio-server/build"
+    - "/usr/local/src/drachtio-server/autom4te.cache"
+  when: checkout.changed
+
+- name: Run autoreconf
+  command: autoreconf -i
   args:
     chdir: /usr/local/src/drachtio-server/
-  register: autogen_result
-  failed_when: autogen_result.rc != 0
+  register: autoreconf_result
+  failed_when: autoreconf_result.rc != 0
   when: checkout.changed
 
 - name: Create build directory
@@ -54,15 +63,28 @@
   when: checkout.changed
 
 - name: Configure drachtio
-  command: ../configure CPPFLAGS='-DNDEBUG'
+  shell: |
+    ../configure CPPFLAGS='-DNDEBUG' \
+    --prefix=/usr/local \
+    --libdir=/usr/local/lib
   args:
     chdir: /usr/local/src/drachtio-server/build
   register: configure_result
   failed_when: configure_result.rc != 0
   when: checkout.changed
 
+- name: Build drachtio (make clean)
+  command: make clean
+  args:
+    chdir: /usr/local/src/drachtio-server/build
+  ignore_errors: yes
+  when: checkout.changed
+
 - name: Build drachtio (make)
-  command: make
+  shell: |
+    make CPPFLAGS="-DNDEBUG" \
+    CFLAGS="-g -O2" \
+    CXXFLAGS="-g -O2"
   args:
     chdir: /usr/local/src/drachtio-server/build
   register: make_result
