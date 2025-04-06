@@ -7,6 +7,7 @@
   apt: 
     name: ['build-essential', 'g++', 'gcc', 'make', 'cmake', 'libcurl4-openssl-dev', 'libboost-all-dev', 'libssl-dev', 'libtool', 'libtool-bin', 'autoconf', 'automake', 'zlib1g-dev', 'libgoogle-perftools-dev', 'git', 'curl', 'systemd-coredump', 'liblz4-tool']
     state: present
+    update_cache: yes
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
 
 - name: Install build tools for CentOS/RedHat
@@ -19,33 +20,70 @@
   file: path=/usr/local/src state=directory mode=0777
 
 - name: check out drachtio-server 
-  git: repo=https://github.com/drachtio/drachtio-server.git
-       dest=/usr/local/src/drachtio-server
-       version={{drachtioBranch}}
-       depth=50
-       accept_hostkey=yes
-       force=yes
+  git: 
+    repo: https://github.com/drachtio/drachtio-server.git
+    dest: /usr/local/src/drachtio-server
+    version: "{{drachtioBranch}}"
+    depth: 50
+    accept_hostkey: yes
+    force: yes
   become: no
   register: checkout
 
-- name: Initialize and update git submodules
+- name: Initialize git submodules
   command: git submodule update --init --recursive
   args:
     chdir: /usr/local/src/drachtio-server
   when: checkout.changed
+  register: submodule_result
+  failed_when: submodule_result.rc != 0
 
-- name: build drachtio-server
-  shell: ./autogen.sh && mkdir -p build && cd $_ && ../configure CPPFLAGS='-DNDEBUG' && make && make install
-  become: yes
+- name: Run autogen.sh
+  command: ./autogen.sh
   args:
-    executable: /bin/bash
     chdir: /usr/local/src/drachtio-server/
-    creates: /usr/local/src/drachtio-server/build/drachtio
-  notify: restart drachtio
+  register: autogen_result
+  failed_when: autogen_result.rc != 0
   when: checkout.changed
 
+- name: Create build directory
+  file:
+    path: /usr/local/src/drachtio-server/build
+    state: directory
+    mode: '0755'
+  when: checkout.changed
+
+- name: Configure drachtio
+  command: ../configure CPPFLAGS='-DNDEBUG'
+  args:
+    chdir: /usr/local/src/drachtio-server/build
+  register: configure_result
+  failed_when: configure_result.rc != 0
+  when: checkout.changed
+
+- name: Build drachtio (make)
+  command: make
+  args:
+    chdir: /usr/local/src/drachtio-server/build
+  register: make_result
+  failed_when: make_result.rc != 0
+  when: checkout.changed
+
+- name: Install drachtio (make install)
+  command: make install
+  args:
+    chdir: /usr/local/src/drachtio-server/build
+  become: yes
+  register: install_result
+  failed_when: install_result.rc != 0
+  when: checkout.changed
+  notify: restart drachtio
+
 - name: Create drachtio log directories
-  file: path="{{ item }}" state=directory
+  file: 
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
   with_items:
     - "{{ drachtioLogFileDirectory }}"
     - "{{ drachtioLogArchiveDirectory }}"
@@ -55,7 +93,7 @@
   template:
     src: drachtio.conf.xml.j2
     dest: "/etc/drachtio.conf.xml"
-    mode: 0644
+    mode: '0644'
     owner: root
     group: root
   notify: restart drachtio
@@ -65,15 +103,23 @@
   template:
     src: drachtio-systemd-script.j2
     dest: /etc/systemd/system/drachtio.service
-    mode: 0644
+    mode: '0644'
     owner: root
     group: root
   notify: restart drachtio
   when: ansible_service_mgr == 'systemd' and checkout.changed
 
-- name: systemctl daemon-reload
-  shell: systemctl daemon-reload
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
   when: ansible_service_mgr == 'systemd' and checkout.changed
+
+- name: Enable and start drachtio service
+  systemd:
+    name: drachtio
+    state: started
+    enabled: yes
+  when: ansible_service_mgr == 'systemd'
 
 - name: remove source code
   file: 
